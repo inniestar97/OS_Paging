@@ -122,10 +122,56 @@ void *ku_mmu_init(unsigned int mem_size, unsigned int swap_size) {
 //      * 0: success
 //      * -1: fail
 
-struct ku_pte {
+typedef struct ku_mmu_pageTable {
+    int pid;
+    char table[256]; // cr3 register
+    struct ku_mmu_pageTable *left;
+    struct ku_mmu_pageTable *right;
+} PAGE_TABLE;
 
-};
+PAGE_TABLE *ku_mmu_processRoot = NULL;
+
+PAGE_TABLE *insert_process(PAGE_TABLE *root, int pid) {
+    if (root == NULL) {
+        root = (PAGE_TABLE *) calloc(1, sizeof(PAGE_TABLE));
+        if (root == NULL) return NULL;
+        root->left = root->right = NULL;
+        root->pid = pid;
+        return root;
+    } else {
+        if (pid < root->pid) {
+            return insert_process(root->left, pid);
+        } else {
+            return insert_process(root->right, pid);
+        }
+
+    }
+}
+
+PAGE_TABLE *search_process(PAGE_TABLE *root, int pid) {
+    if (root->pid == pid) {
+        return root;
+    } else {
+        if (pid < root->pid) {
+            return search_process(root->left, pid);
+        } else {
+            return search_process(root->right, pid);
+        }
+    }
+}
 
 int ku_run_proc(char pid, struct ku_pte **ku_cr3) {
 
+    PAGE_TABLE *process = search_process(ku_mmu_processRoot, pid);
+    if (process == NULL) {
+        process = insert_process(ku_mmu_processRoot, pid);
+        if (process == NULL) {
+            fprintf(stderr, "Page Table is not maked (PCB ERROR). \n");
+            return -1;
+        }
+    }
+
+    *ku_cr3 = process->table;
+
+    return 0;
 }
