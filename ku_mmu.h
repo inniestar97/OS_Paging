@@ -107,6 +107,8 @@ void *ku_mmu_init(unsigned int mem_size, unsigned int swap_size) {
         spfn->pfn = i; spfn->next = NULL;
         push_AFList_PFN(ku_mmu_afList.s_free_head, ku_mmu_afList.s_free_tail, spfn);
     }
+
+    return pmem;
 }
 
 // – Performs context switch
