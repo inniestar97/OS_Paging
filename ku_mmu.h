@@ -16,65 +16,97 @@
 //      * Pointer (i.e., address) to the allocated memory area that simulates the
 //      * physical memory • 0: fail
 
-typedef struct mem_info {
-    int mem_num;
-    struct mem_info *next;
-} MEM_INFO;
+typedef struct ku_mmu_pfn {
+    int pfn;
+    struct ku_mmu_pfn *next;
+} PFN;
 
-typedef struct mem_list {
-    MEM_INFO *head;
-    MEM_INFO *tail;
-} MEM_LIST;
+typedef struct ku_mmu_AFList {
+    PFN *p_free_head;
+    PFN *p_free_tail;
+
+    PFN *p_alloc_head;
+    PFN *p_alloc_tail;
+
+    PFN *s_free_head;
+    PFN *s_free_tail;
+
+    PFN *s_alloc_head;
+    PFN *s_alloc_tail;
+} ALLOC_FREE_LIST;
 
 void *ku_mmu_swapSpace;
+ALLOC_FREE_LIST ku_mmu_afList;
 
-MEM_LIST *ku_mmu_p_freeList;
-MEM_LIST *ku_mmu_p_allocList;
-MEM_LIST *ku_mmu_s_freeList;
-MEM_LIST *ku_mmu_s_allocList;
+void push_AFList_PFN(PFN *head, PFN *tail, PFN *insert) {
+    if (head == NULL) {
+        head = tail = insert;
+        return;
+    }
 
-char *ku_mmu_pageTable;
+    tail->next = insert;
+    tail = insert;
+}
+
+PFN *pop_AFList_PFN(PFN *head, PFN *tail) {
+    if (head == NULL) {
+        return 0;
+    }
+
+    PFN *ret = head;
+    head = ret->next;
+    ret->next = NULL;
+
+    return ret;
+}
 
 void *ku_mmu_init(unsigned int mem_size, unsigned int swap_size) {
-    mem_size -= mem_size % sizeof(int);
-    swap_size -= swap_size % sizeof(int);
-    int *pmem = (int *) malloc(mem_size * sizeof(char));
-    if (pmem == NULL) {
-        fprintf(stderr, "Physical Memory Allocation Failed\n");
+    void *pmem = malloc(sizeof(char) * mem_size);
+    if (pmem = NULL) {
+        fprintf(stderr, "ERROR- ku_mmu_init: Physcal Memory Allocation Failed\n");
         return 0;
     }
 
-    ku_mmu_swapSpace = malloc(mem_size * sizeof(char));
-    if (ku_mmu_swapSpace == NULL) {
-        fprintf(stderr, "SwapSpace Memory Allocation Failed\n");
+    void *swap = malloc(sizeof(char) * swap_size);
+    if (swap = NULL) {
+        fprintf(stderr, "ERROR- ku_mmu_init: Swap Space Memory Allocation Failed\n");
         return 0;
     }
+    ku_mmu_swapSpace = swap;
 
-    ku_mmu_pageTable = (char *) calloc((mem_size / 4), sizeof(char));
-    // ku_mmu_pageTable = (char *) malloc((mem_size / 4) * sizeof(char));
-    // memset(ku_mmu_pageTable, 0, (mem_size / 4) * sizeof(char));
-    if (ku_mmu_pageTable = NULL) {
-        fprintf(stderr, "PageTable Memory Allocation Failed\n");
-        return 0;
+    ku_mmu_afList.p_free_head = ku_mmu_afList.p_free_tail = NULL;
+    ku_mmu_afList.p_alloc_head = ku_mmu_afList.p_alloc_tail = NULL;
+    ku_mmu_afList.s_free_head = ku_mmu_afList.s_free_tail = NULL;
+    ku_mmu_afList.s_alloc_head = ku_mmu_afList.s_alloc_tail = NULL;
+
+    int i = 0;
+    // Physical Memory freeList
+    for (i = 1; i < mem_size / 4; i++) {
+        PFN *npfn = (PFN *) malloc(sizeof(PFN));
+        if (npfn == NULL) {
+            fprintf(stderr, "ERROR- ku_mmu_init: Make Pysical Memory FreeList Not Success.\n");
+        }
+        npfn->pfn = i; npfn->next = NULL;
+        push_AFList_PFN(ku_mmu_afList.p_free_head, ku_mmu_afList.p_free_tail, npfn);
     }
 
-    ku_mmu_p_freeList = (MEM_LIST *) malloc(sizeof(MEM_LIST));
-    ku_mmu_p_freeList->head = ku_mmu_p_freeList->tail = NULL;
-    ku_mmu_p_allocList = (MEM_LIST *) malloc(sizeof(MEM_LIST));
-    ku_mmu_p_allocList->head = ku_mmu_p_allocList-> tail = NULL;
-    ku_mmu_s_freeList = (MEM_LIST *) malloc(sizeof(MEM_LIST));
-    ku_mmu_s_freeList->head = ku_mmu_s_freeList-> tail = NULL;
-    ku_mmu_s_allocList = (MEM_LIST *) malloc(sizeof(MEM_LIST));
-    ku_mmu_s_allocList->head = ku_mmu_s_allocList-> tail = NULL;
-
-    if (ku_mmu_p_freeList == NULL || ku_mmu_p_allocList == NULL
-            || ku_mmu_s_freeList == NULL || ku_mmu_s_allocList == NULL) {
-        fprintf(stderr, "FREE_ALLOC List Memory Allocation Failed\n");
-
-        return 0;
+    // Physcial Memory allocList
+    PFN *osPfn = (PFN *) malloc(sizeof(PFN));
+    if (osPfn == NULL) {
+        fprintf(stderr, "ERROR- ku_mmu_init: Make Pysical Memory AllocList Not Success.\n");
     }
+    osPfn->pfn = 0; osPfn->next = NULL;
+    push_AFList_PFN(ku_mmu_afList.p_alloc_head, ku_mmu_afList.p_alloc_tail, osPfn);
 
-    return pmem;
+    // Swap Memory freeList
+    for (i = 0; i < swap_size / 4; i++) {
+        PFN *spfn = (PFN *) malloc(sizeof(PFN));
+        if (spfn == NULL) {
+            fprintf(stderr, "ERROR- ku_mmu_init: Make Swap Memory FreeList Not Success.\n");
+        }
+        spfn->pfn = i; spfn->next = NULL;
+        push_AFList_PFN(ku_mmu_afList.s_free_head, ku_mmu_afList.s_free_tail, spfn);
+    }
 }
 
 // – Performs context switch
