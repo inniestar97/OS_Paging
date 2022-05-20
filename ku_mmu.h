@@ -81,6 +81,8 @@ void *ku_mmu_init(unsigned int mem_size, unsigned int swap_size) {
 
     int i = 0;
     // Physical Memory freeList
+    // OS 가 항상 0번째 Physical Address 을 사용한다고 가정
+    // 처음에 모두 비여있음
     for (i = 1; i < mem_size / 4; i++) {
         PFN *npfn = (PFN *) malloc(sizeof(PFN));
         if (npfn == NULL) {
@@ -90,15 +92,8 @@ void *ku_mmu_init(unsigned int mem_size, unsigned int swap_size) {
         push_AFList_PFN(ku_mmu_afList.p_free_head, ku_mmu_afList.p_free_tail, npfn);
     }
 
-    // Physcial Memory allocList
-    PFN *osPfn = (PFN *) malloc(sizeof(PFN));
-    if (osPfn == NULL) {
-        fprintf(stderr, "ERROR- ku_mmu_init: Make Pysical Memory AllocList Not Success.\n");
-    }
-    osPfn->pfn = 0; osPfn->next = NULL;
-    push_AFList_PFN(ku_mmu_afList.p_alloc_head, ku_mmu_afList.p_alloc_tail, osPfn);
-
     // Swap Memory freeList
+    // 처음에 모두 비여있다.
     for (i = 0; i < swap_size / 4; i++) {
         PFN *spfn = (PFN *) malloc(sizeof(PFN));
         if (spfn == NULL) {
@@ -174,4 +169,18 @@ int ku_run_proc(char pid, struct ku_pte **ku_cr3) {
     *ku_cr3 = process->table;
 
     return 0;
+}
+
+// – Handling a page fault caused by demand paging or swapping 
+//      * Page replacement policy: FIFO
+// – Managing swap space • Alloc/free lists
+// – pid: process id
+// – va: virtual address
+// – Return value 
+//      * 0: success
+//      * -1: fail
+
+// page falt -> 아직 pa가 할당받지 못했을때
+int ku_page_fault(char pid, char va) {
+
 }
