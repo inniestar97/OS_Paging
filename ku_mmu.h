@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 typedef struct ku_mmu_page_frame {
-    int pfn;
+    char pfn;
     struct ku_mmu_page_frame *next;
 } PAGE_FRAME;
 
@@ -162,5 +162,25 @@ int ku_run_proc(char pid, struct ku_pte **ku_cr3) {
 
 // TODO: ku_page_fault 처리 해야할것
 int ku_page_fault(char pid, char va) {
+    // 현재 pid에 가져온 내용이,, page table 을 통해 연결되있지 않은경우 연결 해줘야한다.
+    // 물리적 메모리에 연결이 안되어있자나. physical Memory 하나 남는거 찾아야지
+
+    PCB *pcb = searchProcess(ku_mmu_root_pcb, pid);
+    char offset = (va & 0xFC) >> 2;
+
+    PAGE_FRAME *pf = popPageFrame(ku_mmu_mem_free_list);
+    if (pf != 0) { // physical Memory에 아직 들어갈 수 있다면
+        pushPageFrame(ku_mmu_mem_alloc_list, pf);
+
+        char pfn = pf->pfn;
+        char pte = pfn << 2; // BBBB00
+        pte = pte | 0x03; // BBBB01
+        pcb->table[offset] = pte;
+
+    } else { // physcial Memory에 아직 들어갈 수 없다면
+        // TODO -> mem_alloc_list 가장 앞에 있는 pf 를 free 시켜주고, 이를 swap공간으로 out시켜준다.
+        // alloc에서 free로 된 pf를 해당 프로세스에게 할당한다
+
+    }
 
 }
