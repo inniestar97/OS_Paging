@@ -1,186 +1,166 @@
 #pragma once
 #include <stdlib.h>
+#include <stdio.h>
 
-// - Resource initialization function
-//      * Will be called only once at the initialization phase
-// - mem_size: physical memory size in bytes
-//      * You need to allocate a memory space and manage alloc/free lists 
-//         – Assume that page frame 0 is occupied by OS
-//      *  Do not consider the memory space consumed by page table and internal data structures 
-//         (e.g., alloc/free lists and PCBs)
-// - swap_size: swap disk size in bytes
-//      * Allocate a memory space instead of real disk space
-//      * You may need to manage alloc/free lists
-// - pmem and swap spaces are dummy; no need of actual data copies between pmem and swap spaces
-// - Return value
-//      * Pointer (i.e., address) to the allocated memory area that simulates the
-//      * physical memory • 0: fail
-
-typedef struct ku_mmu_pfn {
+typedef struct ku_mmu_page_frame {
     int pfn;
-    struct ku_mmu_pfn *next;
-} PFN;
+    struct ku_mmu_page_frame *next;
+} PAGE_FRAME;
 
-typedef struct ku_mmu_AFList {
-    PFN *p_free_head;
-    PFN *p_free_tail;
-
-    PFN *p_alloc_head;
-    PFN *p_alloc_tail;
-
-    PFN *s_free_head;
-    PFN *s_free_tail;
-
-    PFN *s_alloc_head;
-    PFN *s_alloc_tail;
+typedef struct ku_mmu_alloc_free_list {
+    PAGE_FRAME *head;
+    PAGE_FRAME *tail;
 } ALLOC_FREE_LIST;
 
-void *ku_mmu_swapSpace;
-ALLOC_FREE_LIST ku_mmu_afList;
+// 스왑공간 시작 포인터 (동적할당)
+void *ku_mmu_swap_space;
 
-void push_AFList_PFN(PFN *head, PFN *tail, PFN *insert) {
-    if (head == NULL) {
-        head = tail = insert;
+// 메모리, 스왑공간 alloc, free list
+ALLOC_FREE_LIST *ku_mmu_mem_free_list;
+ALLOC_FREE_LIST *ku_mmu_mem_alloc_list;
+ALLOC_FREE_LIST *ku_mmu_swap_free_list;
+ALLOC_FREE_LIST *ku_mmu_swap_alloc_list;
+
+// alloc list 와 free list를 효과적으로 관리하기 위한 함수
+// pushPageFrame, popPageFrame >> FIFO 방식으로 불러온다
+void pushPageFrame(ALLOC_FREE_LIST *list, PAGE_FRAME *pf) {
+    if (list->head == NULL) {
+        list->head = list->tail = pf;
         return;
     }
 
-    tail->next = insert;
-    tail = insert;
+    list->tail->next = pf;
+    list->tail = pf;
 }
 
-PFN *pop_AFList_PFN(PFN *head, PFN *tail) {
-    if (head == NULL) {
+PAGE_FRAME *popPageFrame(ALLOC_FREE_LIST *list) {
+    if (list->head == NULL) {
         return 0;
     }
 
-    PFN *ret = head;
-    head = ret->next;
+    PAGE_FRAME *ret = list->head;
+    list->head = ret->next;
     ret->next = NULL;
 
     return ret;
 }
 
 void *ku_mmu_init(unsigned int mem_size, unsigned int swap_size) {
-    void *pmem = malloc(sizeof(char) * mem_size);
-    if (pmem = NULL) {
-        fprintf(stderr, "ERROR- ku_mmu_init: Physcal Memory Allocation Failed\n");
+    void *pmem = malloc(sizeof(char) * mem_size); // 메모리 공간 설정
+    if (pmem == NULL) {
+        fprintf(stderr, "ERROR- ku_mmu_init: Physical Memory Allocation Failed.\n");
         return 0;
     }
 
-    void *swap = malloc(sizeof(char) * swap_size);
-    if (swap = NULL) {
-        fprintf(stderr, "ERROR- ku_mmu_init: Swap Space Memory Allocation Failed\n");
+    void *swap = malloc(sizeof(char) * swap_size); // 스왑 공간 설정
+    if (swap == NULL) {
+        fprintf(stderr, "ERROR- ku_mmu_init: Swap space Memory Allocation Failed.\n");
         return 0;
     }
-    ku_mmu_swapSpace = swap;
+    ku_mmu_swap_space = swap;
 
-    ku_mmu_afList.p_free_head = ku_mmu_afList.p_free_tail = NULL;
-    ku_mmu_afList.p_alloc_head = ku_mmu_afList.p_alloc_tail = NULL;
-    ku_mmu_afList.s_free_head = ku_mmu_afList.s_free_tail = NULL;
-    ku_mmu_afList.s_alloc_head = ku_mmu_afList.s_alloc_tail = NULL;
+    // alloc free List Initailzation
+    ku_mmu_mem_free_list = (ALLOC_FREE_LIST *) malloc(sizeof(ALLOC_FREE_LIST));
+    ku_mmu_mem_alloc_list = (ALLOC_FREE_LIST *) malloc(sizeof(ALLOC_FREE_LIST));
+    ku_mmu_swap_free_list = (ALLOC_FREE_LIST *) malloc(sizeof(ALLOC_FREE_LIST));
+    ku_mmu_swap_alloc_list = (ALLOC_FREE_LIST *) malloc(sizeof(ALLOC_FREE_LIST));
+
+    if (ku_mmu_mem_free_list == NULL || ku_mmu_mem_alloc_list == NULL 
+            || ku_mmu_swap_free_list == NULL || ku_mmu_swap_alloc_list == NULL) {
+        fprintf(stderr, "ERROR- ku_mmu_init: alloc_free_list Allocation Failed.\n");
+        return 0;
+    }
+
+    ku_mmu_mem_free_list->head = ku_mmu_mem_free_list->tail = NULL;
+    ku_mmu_mem_alloc_list->head = ku_mmu_mem_alloc_list->tail = NULL;
+    ku_mmu_swap_free_list->head = ku_mmu_swap_free_list->tail = NULL;
+    ku_mmu_swap_alloc_list->head = ku_mmu_swap_alloc_list->tail = NULL;
 
     int i = 0;
     // Physical Memory freeList
-    // OS 가 항상 0번째 Physical Address 을 사용한다고 가정
-    // 처음에 모두 비여있음
+    // OS 가 항상 0번째 physical Frame 을 사용한다고 가정
+    // 처음엔 모두 비여있으므로 ku_mmu_mem_free_list에 추가
     for (i = 1; i < mem_size / 4; i++) {
-        PFN *npfn = (PFN *) malloc(sizeof(PFN));
-        if (npfn == NULL) {
-            fprintf(stderr, "ERROR- ku_mmu_init: Make Pysical Memory FreeList Not Success.\n");
+        PAGE_FRAME *pf = (PAGE_FRAME *) malloc(sizeof(PAGE_FRAME));
+        if (pf == NULL) {
+            fprintf(stderr, "ERROR- ku_mmu_init: Make Physical Memory FreeList Failed.\n");
+            return 0;
         }
-        npfn->pfn = i; npfn->next = NULL;
-        push_AFList_PFN(ku_mmu_afList.p_free_head, ku_mmu_afList.p_free_tail, npfn);
+        pf->pfn = i; pf->next = NULL;
+        pushPageFrame(ku_mmu_mem_free_list, pf);
     }
 
-    // Swap Memory freeList
-    // 처음에 모두 비여있다.
+
+    // Swap Space Memory FreeList
+    // 처음엔 모두 비여있으므로 ku_mmu_swap_free_list 에 추가
     for (i = 0; i < swap_size / 4; i++) {
-        PFN *spfn = (PFN *) malloc(sizeof(PFN));
-        if (spfn == NULL) {
-            fprintf(stderr, "ERROR- ku_mmu_init: Make Swap Memory FreeList Not Success.\n");
+        PAGE_FRAME *pf = (PAGE_FRAME *) malloc(sizeof(PAGE_FRAME));
+        if (pf == NULL) {
+            fprintf(stderr, "ERROR- ku_mmu_init: Make Swap Space Memory FreeList Failed.\n");
+            return 0;
         }
-        spfn->pfn = i; spfn->next = NULL;
-        push_AFList_PFN(ku_mmu_afList.s_free_head, ku_mmu_afList.s_free_tail, spfn);
+        pf->pfn = i; pf->next = NULL;
+        pushPageFrame(ku_mmu_swap_free_list, pf);
     }
 
     return pmem;
 }
 
-// – Performs context switch
-//      * If pid is new, the function creates a process (i.e., PCB) and its page table
-// – pid: pid of the next process
-// – ku_cr3: stores the base address of the page table for the current process
-//      * Points an 8-bit PTE (i.e., base address of the page table)
-//      * Should be changed by this function when a context switch happens 
-//      * struct ku_pte should be defined appropriately
-// – Return value 
-//      * 0: success
-//      * -1: fail
+// 이진트리를 위한 process control block 구조체 생성
+typedef struct ku_mmu_process_control_block {
+    char pid;
+    char table[64];
+    struct ku_mmu_process_control_block *left;
+    struct ku_mmu_process_control_block *right;
+} PCB;
 
-typedef struct ku_mmu_pageTable {
-    int pid;
-    char table[256]; // cr3 register
-    struct ku_mmu_pageTable *left;
-    struct ku_mmu_pageTable *right;
-} PAGE_TABLE;
+PCB *ku_mmu_root_pcb = NULL;
 
-PAGE_TABLE *ku_mmu_processRoot = NULL;
-
-PAGE_TABLE *insert_process(PAGE_TABLE *root, int pid) {
-    if (root == NULL) {
-        root = (PAGE_TABLE *) calloc(1, sizeof(PAGE_TABLE));
-        if (root == NULL) return NULL;
-        root->left = root->right = NULL;
-        root->pid = pid;
-        return root;
+// 이진트리를 이용하여 pcb 접근.
+// 이번 프로젝트에선 한번 생성된 프로세스는 삭제되지 않는다.
+PCB *insertProcess(PCB *parent, int pid) {
+    if (parent == NULL) {
+        parent = (PCB *) calloc(1, sizeof(PCB));
+        parent->left = parent->right = NULL;
+        parent->pid = pid;
+        return parent;
     } else {
-        if (pid < root->pid) {
-            return insert_process(root->left, pid);
+        if (pid < parent->pid) {
+            return insertProcess(parent->left, pid);
         } else {
-            return insert_process(root->right, pid);
+            return insertProcess(parent->right, pid);
         }
-
     }
 }
 
-PAGE_TABLE *search_process(PAGE_TABLE *root, int pid) {
-    if (root->pid == pid) {
-        return root;
+PCB *searchProcess(PCB *parent, int pid) {
+    if (parent->pid == pid) {
+        return parent;
     } else {
-        if (pid < root->pid) {
-            return search_process(root->left, pid);
+        if (pid < parent->pid) {
+            return searchProcess(parent->left, pid);
         } else {
-            return search_process(root->right, pid);
+            return searchProcess(parent->right, pid);
         }
     }
 }
 
 int ku_run_proc(char pid, struct ku_pte **ku_cr3) {
+    PCB *process = searchProcess(ku_mmu_root_pcb, pid);
 
-    PAGE_TABLE *process = search_process(ku_mmu_processRoot, pid);
-    if (process == NULL) {
-        process = insert_process(ku_mmu_processRoot, pid);
+    if (process == NULL) { // 기존에 존재했던 process 가 아니라면
+        process = insertProcess(ku_mmu_root_pcb, pid);
         if (process == NULL) {
-            fprintf(stderr, "Page Table is not maked (PCB ERROR). \n");
+            fprintf(stderr, "ERROR- ku_run_proc: Process Control Block is not maked.\n");
             return -1;
         }
     }
 
-    *ku_cr3 = process->table;
-
+    *ku_cr3 = (struct ku_pte *) process->table;
     return 0;
 }
 
-// – Handling a page fault caused by demand paging or swapping 
-//      * Page replacement policy: FIFO
-// – Managing swap space • Alloc/free lists
-// – pid: process id
-// – va: virtual address
-// – Return value 
-//      * 0: success
-//      * -1: fail
-
-// page falt -> 아직 pa가 할당받지 못했을때
+// TODO: ku_page_fault 처리 해야할것
 int ku_page_fault(char pid, char va) {
 
 }
