@@ -4,6 +4,8 @@
 
 typedef struct ku_mmu_page_frame {
     char pfn;
+    char pid; // 해당 page frame에게 할당된 pid, 0일경우 어느 프로세스도 접근 안돼있다
+    char va; // pid프로세스 내에서 해당 페이지가 가진 virtual address 0일경우 free
     struct ku_mmu_page_frame *next;
 } PAGE_FRAME;
 
@@ -41,6 +43,22 @@ PAGE_FRAME *popPageFrame(ALLOC_FREE_LIST *list) {
     PAGE_FRAME *ret = list->head;
     list->head = ret->next;
     ret->next = NULL;
+
+    return ret;
+}
+
+PAGE_FRAME *popPageFrame2(ALLOC_FREE_LIST *list, char pfn) {
+    PAGE_FRAME *ret;
+
+    PAGE_FRAME *pop = popPageFrame(list);
+    while (pop != 0) {
+        if (pop->pfn != pfn) {
+            ret = pop;
+        } else {
+            pushPageFrame(list, pop);
+        }
+        pop = popPageFrame(list);
+    }
 
     return ret;
 }
@@ -86,7 +104,10 @@ void *ku_mmu_init(unsigned int mem_size, unsigned int swap_size) {
             fprintf(stderr, "ERROR- ku_mmu_init: Make Physical Memory FreeList Failed.\n");
             return 0;
         }
-        pf->pfn = i; pf->next = NULL;
+        pf->pid = 0;
+        pf->va = 0;
+        pf->pfn = i;
+        pf->next = NULL;
         pushPageFrame(ku_mmu_mem_free_list, pf);
     }
 
@@ -99,7 +120,10 @@ void *ku_mmu_init(unsigned int mem_size, unsigned int swap_size) {
             fprintf(stderr, "ERROR- ku_mmu_init: Make Swap Space Memory FreeList Failed.\n");
             return 0;
         }
-        pf->pfn = i; pf->next = NULL;
+        pf->pid = 0;
+        pf->va = 0;
+        pf->pfn = i;
+        pf->next = NULL;
         pushPageFrame(ku_mmu_swap_free_list, pf);
     }
 
@@ -162,25 +186,92 @@ int ku_run_proc(char pid, struct ku_pte **ku_cr3) {
 
 // TODO: ku_page_fault 처리 해야할것
 int ku_page_fault(char pid, char va) {
-    // 현재 pid에 가져온 내용이,, page table 을 통해 연결되있지 않은경우 연결 해줘야한다.
-    // 물리적 메모리에 연결이 안되어있자나. physical Memory 하나 남는거 찾아야지
+    // 현재 프로세스가 처음 실행되었거나, swap space에 있는경우 present bit == 0이다.
+    // 만약 swap space 에 있다면 swap space에서 physcial memory로 가져와야하고,
+    // 처음 시작이라면 physical memory에서 하나를 할당시켜야한다
 
-    PCB *pcb = searchProcess(ku_mmu_root_pcb, pid);
+    PCB *current_process_pcb = searchProcess(ku_mmu_root_pcb, pid);
+    char *pdbr = current_process_pcb->table;
     char offset = (va & 0xFC) >> 2;
+    
+    if (pdbr[offset]) { // true이면 swap Space에 존재한다
+        char swap_page_offset = (pdbr[offset] & 0xFD) >> 1;
 
-    PAGE_FRAME *pf = popPageFrame(ku_mmu_mem_free_list);
-    if (pf != 0) { // physical Memory에 아직 들어갈 수 있다면
-        pushPageFrame(ku_mmu_mem_alloc_list, pf);
+        // alloc되어있는 swap space의 해당 page을 꺼내온다
+        PAGE_FRAME *aspf = popPageFrame2(ku_mmu_swap_alloc_list, swap_page_offset);
+        // -> swapspace를 건드린다는 얘기는 physical memory가 꽉 찼다는 얘기
+        PAGE_FRAME *appf = popPageFrame(ku_mmu_mem_alloc_list);
 
-        char pfn = pf->pfn;
-        char pte = pfn << 2; // BBBB00
-        pte = pte | 0x03; // BBBB01
-        pcb->table[offset] = pte;
+        PCB *topm = searchProcess(ku_mmu_root_pcb, aspf->pid);
+        topm->table[]
 
-    } else { // physcial Memory에 아직 들어갈 수 없다면
-        // TODO -> mem_alloc_list 가장 앞에 있는 pf 를 free 시켜주고, 이를 swap공간으로 out시켜준다.
-        // alloc에서 free로 된 pf를 해당 프로세스에게 할당한다
 
+    } else { // 새로 만들어져서 swap space에도 존재하지 않는다.
+        // 1. physical free 되어있는 page가 존재하는지 확인한다.
+        // 2. 존재한다면 바로 사용
+        // 3. 존재하지 않는다면 alloc되어있는 physical mem 중 하나를 swap으로이동.
+        while (1) {
+            PAGE_FRAME *fpp = popPageFrame(ku_mmu_mem_free_list);
+            if (fpp != 0) { // physical free page is existed
+                fpp->pid = pid;
+                fpp->va = va;
+
+                char pte = fpp->pfn << 2;
+                pte = pte | 0x01;
+                pdbr[offset] = pte;
+                pushPageFrame(ku_mmu_mem_alloc_list, fpp);
+
+                break;
+            } else { // physical free page is not existed
+                // Therefore one of the alloc page get free and to swap
+                PAGE_FRAME *app = popPageFrame(ku_mmu_mem_alloc_list);
+                char to_swap_pid = app->pid;
+                char to_swap_va = app->va;
+
+                app->pid = 0;
+                app->va = 0;
+                pushPageFrame(ku_mmu_mem_free_list, app);
+
+                PAGE_FRAME *fsp = popPageFrame(ku_mmu_swap_free_list);
+                fsp->pid = to_swap_pid;
+                fsp->va = to_swap_va;
+                PCB *to_swap = searchProcess(ku_mmu_root_pcb, to_swap_pid);
+
+                char pte_offset = (va & 0xFC) >> 2;
+                to_swap->table[pte_offset] = fsp->pfn << 1;
+            }
+        }
     }
+
+
+
+    // PCB *pcb = searchProcess(ku_mmu_root_pcb, pid);
+    // char offset = (va & 0xFC) >> 2;
+
+    // PAGE_FRAME *pf = popPageFrame(ku_mmu_mem_free_list);
+    // if (pf != 0) { // physical Memory에 아직 들어갈 수 있다면
+    //     pf->pid = pid;
+    //     pushPageFrame(ku_mmu_mem_alloc_list, pf);
+
+    //     char pfn = pf->pfn;
+    //     char pte = pfn << 2; // BBBB00
+    //     pte = pte | 0x03; // BBBB01
+    //     pcb->table[offset] = pte;
+
+    // } else { // physcial Memory에 들어갈 수 없다면
+    //     // alloc에서 free로 된 pf를 해당 프로세스에게 할당한다
+
+    //     // free 시켜야할 physcial memory의 page frame
+    //     PAGE_FRAME *to_free_pf = popPageFrame(ku_mmu_mem_alloc_list);
+
+    //     PCB *to_free_pcb = searchProcess(ku_mmu_root_pcb, to_free_pf->pid);
+
+
+
+
+    //     char to_swap_pid = to_free_pf->pid;
+    //     to_free_pf->pid = pid;
+
+    // }
 
 }
