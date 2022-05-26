@@ -198,13 +198,25 @@ int ku_page_fault(char pid, char va) {
         char swap_page_offset = (pdbr[offset] & 0xFD) >> 1;
 
         // alloc되어있는 swap space의 해당 page을 꺼내온다
-        PAGE_FRAME *aspf = popPageFrame2(ku_mmu_swap_alloc_list, swap_page_offset);
+        PAGE_FRAME *asp = popPageFrame2(ku_mmu_swap_alloc_list, swap_page_offset);
         // -> swapspace를 건드린다는 얘기는 physical memory가 꽉 찼다는 얘기
-        PAGE_FRAME *appf = popPageFrame(ku_mmu_mem_alloc_list);
+        PAGE_FRAME *app = popPageFrame(ku_mmu_mem_alloc_list);
 
-        PCB *topm = searchProcess(ku_mmu_root_pcb, aspf->pid);
-        topm->table[]
+        asp->pid = app->pid;
+        asp->va = app->va;
+        app->pid = pid;
+        app->va = va;
 
+        PCB *to_swap = searchProcess(ku_mmu_root_pcb, asp->pid);
+        char pte_offset = (asp->va & 0xFC) >> 2;
+        to_swap->table[pte_offset] = asp->pfn << 1;
+
+        char pte = (app->pfn << 2);
+        pte = pte | 0x01;
+        pdbr[offset] = pte;
+
+        pushPageFrame(ku_mmu_swap_alloc_list, asp);
+        pushPageFrame(ku_mmu_mem_alloc_list, app);
 
     } else { // 새로 만들어져서 swap space에도 존재하지 않는다.
         // 1. physical free 되어있는 page가 존재하는지 확인한다.
