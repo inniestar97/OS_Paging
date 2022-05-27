@@ -6,7 +6,7 @@ typedef struct ku_mmu_page {
     char pfn;
     char pid;
     char va;
-    struct ku_mmu_page_frame *next;
+    struct ku_mmu_page *next;
 } PAGE;
 
 typedef struct ku_mmu_page_list {
@@ -63,7 +63,7 @@ PAGE *popPage_fromList(PAGE_LIST *list, char pfn) {
             }
 
             beforePage = currentPage;
-            currentPage = beforePage->next;
+            currentPage = currentPage->next;
         }
     }
 
@@ -153,9 +153,9 @@ PCB *insertPCB(PCB *parent, char pid) {
 
     } else{
         if (pid < parent->pid) {
-            parent->left = insertProcess(parent->left, pid);
+            parent->left = insertPCB(parent->left, pid);
         } else {
-            parent->right = insertProcess(parent->right, pid);
+            parent->right = insertPCB(parent->right, pid);
         }
     }
 
@@ -163,7 +163,7 @@ PCB *insertPCB(PCB *parent, char pid) {
 }
 
 PCB *searchPCB(PCB *root, char pid) {
-    if (root = NULL || root->pid == pid) {
+    if (root == NULL || root->pid == pid) {
         return root; 
     } 
 
@@ -185,7 +185,7 @@ int ku_run_proc(char pid, struct ku_pte **ku_cr3) {
     }
 
     // pcb안의 table이 pte가 있는 table 의 시작주소
-    *ku_cr3 = (struct ku_pid *) pcb->table;
+    *ku_cr3 = (struct ku_pte *) pcb->table;
     return 0;
 }
 
