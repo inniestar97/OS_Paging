@@ -14,10 +14,10 @@ typedef struct ku_mmu_page_list {
     PAGE *tail;
 } PAGE_LIST;
 
-PAGE_LIST *ku_mmu_fMem;
-PAGE_LIST *ku_mmu_aMem;
-PAGE_LIST *ku_mmu_fSwap;
-PAGE_LIST *ku_mmu_aSwap;
+PAGE_LIST *ku_mmu_PF_List; // physical memory page free list
+PAGE_LIST *ku_mmu_PA_List; // physical memory page alloc list
+PAGE_LIST *ku_mmu_SF_List; // swap space page free list
+PAGE_LIST *ku_mmu_SA_List; // swap space page alloc list
 
 // alloc or free list 의 tail 에 page삽입 -> physical, swapspace
 void pushPage_toList(PAGE_LIST *list, PAGE *page) {
@@ -29,11 +29,6 @@ void pushPage_toList(PAGE_LIST *list, PAGE *page) {
     list->tail->next = page;
     list->tail = page;
 }
-
-PAGE_LIST *ku_mmu_PF_List; // physical memory page free list
-PAGE_LIST *ku_mmu_PA_List; // physical memory page alloc list
-PAGE_LIST *ku_mmu_SF_List; // swap space page free list
-PAGE_LIST *ku_mmu_SA_List; // swap space page alloc list
 
 // alloc or free list 에서 page를 가져온다.
 // pfn < 0 이라면 가장 앞부분에서 page pop
@@ -131,7 +126,8 @@ void *ku_mmu_init(unsigned int mem_size, unsigned int swap_size) {
 typedef struct ku_mmu_process_control_block {
     char pid;
     // 8bit addressing, 6bit: cr3_offset => 64, 1byte pte => char
-    char table[64]; 
+    // char table[64]; 
+    char table[64];
     struct ku_mmu_process_control_block *left;
     struct ku_mmu_process_control_block *right;
 } PCB;
@@ -151,7 +147,7 @@ PCB *insertPCB(PCB *parent, char pid) {
             parent->table[i] = 0;
         }
 
-    } else{
+    } else { 
         if (pid < parent->pid) {
             parent->left = insertPCB(parent->left, pid);
         } else {
@@ -177,12 +173,13 @@ PCB *searchPCB(PCB *root, char pid) {
 int ku_run_proc(char pid, struct ku_pte **ku_cr3) {
     PCB *pcb = searchPCB(ku_mmu_rootPCB, pid);
     if (pcb == 0) {
-        pcb = insertPCB(ku_mmu_rootPCB, pid);
-        if (pcb == NULL) {
+        ku_mmu_rootPCB = insertPCB(ku_mmu_rootPCB, pid);
+        if (ku_mmu_rootPCB == 0) {
             fprintf(stderr, "ERROR- ku_run_proc: Process Control Block is not maked.\n");
             return -1;
         }
     }
+    pcb = searchPCB(ku_mmu_rootPCB, pid);
 
     // pcb안의 table이 pte가 있는 table 의 시작주소
     *ku_cr3 = (struct ku_pte *) pcb->table;
@@ -192,11 +189,14 @@ int ku_run_proc(char pid, struct ku_pte **ku_cr3) {
 int ku_page_fault(char pid, char va) {
     // 현재 돌려야하는 프로세스가 physical memory에 할당되어있지 않을때.
     PCB *current_proPCB = searchPCB(ku_mmu_rootPCB, pid);
+
     char *cr3 = current_proPCB->table;
     char pte_offset = (va & 0xFC) >> 2;
     char *pte = cr3 + pte_offset;
-
+    
+    // TODO: 여기서 pte 접근이 잘못된것같음. 클났음 ㅆㅃ.
     if (*pte) { // swap space에 존재했었다면.
+
         // 현재 physical memory 가 full이라는 의미
 
         // 할당되어있전 swap공간을 해제시켜준다
