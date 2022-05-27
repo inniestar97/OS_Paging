@@ -194,11 +194,8 @@ int ku_page_fault(char pid, char va) {
     char pte_offset = (va & 0xFC) >> 2;
     char *pte = cr3 + pte_offset;
     
-    // TODO: 여기서 pte 접근이 잘못된것같음. 클났음 ㅆㅃ.
     if (*pte) { // swap space에 존재했었다면.
-
         // 현재 physical memory 가 full이라는 의미
-
         // 할당되어있전 swap공간을 해제시켜준다
         char swap_pfn = (*pte & 0xFD) >> 1;
         PAGE *swap_page = popPage_fromList(ku_mmu_SA_List, swap_pfn);
